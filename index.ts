@@ -109,6 +109,7 @@ export default function (pi: ExtensionAPI) {
 	let automatic = false;
 	let generation = 0;
 	const pending = new Set<AbortController>();
+	const background = new Set<Promise<void>>();
 
 	function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" = "info") {
 		if (ctx.hasUI) ctx.ui.notify(message, level);
@@ -156,7 +157,6 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function aiDescription(ctx: ExtensionContext, source: string, fallback: Description, repos: Repository[]): Promise<Description | undefined> {
-		if (ctx.signal?.aborted) return undefined;
 		let model: ReturnType<typeof findModel>;
 		try {
 			model = findModel(ctx, modelSetting());
@@ -167,7 +167,7 @@ export default function (pi: ExtensionAPI) {
 		if (!model) { notify(ctx, "Naming model unavailable; session name unchanged.", "warning"); return undefined; }
 		const token = generation;
 		const controller = new AbortController();
-		const signal = ctx.signal ? AbortSignal.any([controller.signal, ctx.signal]) : controller.signal;
+		const signal = controller.signal;
 		pending.add(controller);
 		const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
 		let onAbort: () => void = () => {};
@@ -269,16 +269,21 @@ export default function (pi: ExtensionAPI) {
 		pending.clear();
 	});
 
-	pi.on("input", async (event, ctx) => {
+	pi.on("input", (event, ctx) => {
 		if (!automatic || event.source !== "interactive" || pi.getSessionName()) return;
 		const task = taskFrom(event.text);
 		if (!task) return;
 		automatic = false;
 		const token = generation;
-		const name = await makeName(ctx, task, undefined, cleanPrompt(event.text), undefined, true);
-		// A manual rename or session replacement while AI/Git runs always wins.
-		if (!name || token !== generation || pi.getSessionName()) return;
-		save(ctx, name);
+		// Naming runs in the background so the first request is never blocked by the AI call.
+		const naming = (async () => {
+			const name = await makeName(ctx, task, undefined, cleanPrompt(event.text), undefined, true);
+			// A manual rename or session replacement while AI/Git runs always wins.
+			if (!name || token !== generation || pi.getSessionName()) return;
+			save(ctx, name);
+		})().catch(() => {});
+		background.add(naming);
+		void naming.finally(() => background.delete(naming));
 	});
 
 	pi.registerCommand("session-autoname", {
@@ -368,4 +373,7 @@ export default function (pi: ExtensionAPI) {
 			notify(ctx, name);
 		},
 	});
+
+	// Pi ignores a factory return value; tests use this to await background naming.
+	return { drain: () => Promise.allSettled([...background]) };
 }

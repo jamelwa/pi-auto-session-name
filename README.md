@@ -53,6 +53,7 @@ Pi's built-in `/name` remains available for fully manual titles. `done` means th
 ## Behavior
 
 - Only new, unnamed interactive terminal sessions are automatically named, on the first meaningful prompt. Greetings, command-only inputs and extension-generated prompts are skipped.
+- Automatic naming runs **in the background**: the first request reaches the model immediately, and the title is applied when the naming call returns. It never blocks the prompt, and a failed or slow naming call simply leaves the session unnamed until you retry.
 - Resuming a session or reloading with existing history never auto-renames it. Manual names win, including during a pending AI request. Explicit replacement shows a confirmation preview.
 - Names use a stable application/domain and a concrete task, not a filesystem path or the raw first prompt. Recent scope approvals and completion reports take precedence over stale summary progress.
 - Repository candidates come from Git at the launch directory and up to eight existing directories explicitly mentioned in the work context. No broad directory crawl. Linked worktrees normalize to their canonical repository.

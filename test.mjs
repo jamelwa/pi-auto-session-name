@@ -18,6 +18,13 @@ beforeEach(() => rmSync(modelConfig, { force: true }));
 after(() => rm(extensionDir, { recursive: true, force: true }));
 
 const execute = promisify(execFile);
+async function waitFor(predicate, ms = 5000) {
+	const deadline = Date.now() + ms;
+	while (!predicate()) {
+		if (Date.now() > deadline) throw new Error("Timed out waiting for condition");
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+}
 const user = (text) => ({ type: "message", message: { role: "user", content: text } });
 const miss = { stdout: "", stderr: "not a repository", code: 128, killed: false };
 const simpleModel = { provider: "fixture", id: "fixture" };
@@ -60,13 +67,15 @@ function harness(options = {}) {
 		appendEntry: (customType, data) => state.entries.push({ type: "custom", customType, data }),
 		exec: options.exec ?? (async () => miss),
 	};
-	extension(pi);
+	const api = extension(pi);
+	const drain = () => api?.drain?.() ?? Promise.resolve();
 	return {
-		state, ctx, handlers, commands,
+		state, ctx, handlers, commands, drain,
 		start: (reason = "startup") => handlers.get("session_start")({ reason }, ctx),
 		input: async (text, source = "interactive") => {
 			await handlers.get("input")({ text, source }, ctx);
 			state.entries.push(user(text));
+			await drain(); // Automatic naming is background work; settle it before asserting.
 		},
 		command: (name, args = "") => commands.get(name).handler(args, ctx),
 	};
@@ -223,6 +232,19 @@ test("home-launched sessions find target repo and late worktree branch without m
 	} finally {
 		await rm(temp, { recursive: true, force: true });
 	}
+});
+
+test("automatic naming runs in the background and never blocks the input handler", async () => {
+	let resolve;
+	const h = aiHarness(() => new Promise((done) => { resolve = done; }));
+	await h.start();
+	await h.handlers.get("input")({ text: "Fix checkout", source: "interactive" }, h.ctx);
+	await new Promise((done) => setImmediate(done));
+	assert.equal(h.state.name, undefined); // The handler returned before naming resolved.
+	assert.equal(h.calls.length, 1); // Naming did start in the background.
+	resolve({ ...aiResponse });
+	await h.drain();
+	assert.equal(h.state.name, "atlas - fix promotion expiry [wip] #a83f91bc");
 });
 
 test("model selection persists globally across instances without changing chat model or title", async () => {
@@ -601,6 +623,7 @@ test("installed Pi loader and real session persistence/resume/fork", async () =>
 		let loaded = await load("startup");
 		await loaded.emit("input", { text: "Fix persistence", source: "interactive" });
 		manager.appendMessage({ role: "user", content: "Fix persistence", timestamp: Date.now() });
+		await waitFor(() => manager.getSessionName()); // Automatic naming runs in the background.
 		await loaded.status("done");
 		const originalName = manager.getSessionName();
 		const originalId = manager.getSessionId();
