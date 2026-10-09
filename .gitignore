@@ -1,0 +1,11 @@
+/config.json
+/.config-*.json
+/node_modules/
+/.pi/
+/sessions/
+.env
+.env.*
+*.jsonl
+*.log
+*.tgz
+.DS_Store

@@ -1,0 +1,26 @@
+{
+  "name": "pi-auto-session-name",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Semantic Pi session names with explicit status, verified work branches, and a separate naming model.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamelwa/pi-auto-session-name.git"
+  },
+  "keywords": ["pi-package", "pi-extension", "session-naming"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "files": ["index.ts", "README.md"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
