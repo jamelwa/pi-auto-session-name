@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Input, SelectList, Text, fuzzyFilter } from "@earendil-works/pi-tui";
 
 const STATE = "auto-session-name:v1";
 const AI_TIMEOUT_MS = 30_000;
@@ -41,6 +42,48 @@ function findModel(ctx: ExtensionContext, setting: string) {
 	if (setting === "current") return ctx.model;
 	const slash = setting.indexOf("/");
 	return slash > 0 ? ctx.modelRegistry.find(setting.slice(0, slash), setting.slice(slash + 1)) : undefined;
+}
+
+async function pickModel(ctx: ExtensionContext, current: string, available: string[]) {
+	if (ctx.mode !== "tui") return ctx.ui.select(`Naming model: ${current}`, ["current", ...new Set(available)]);
+	const items = ["current", ...new Set(available)].map((value) => ({ value, label: value }));
+	return ctx.ui.custom<string | undefined>((tui, theme, keys, done) => {
+		const container = new Container();
+		const input = new Input({ placeholder: "Search provider or model" });
+		const style = {
+			selectedPrefix: (s: string) => theme.fg("accent", s), selectedText: (s: string) => theme.fg("accent", s),
+			description: (s: string) => theme.fg("muted", s), scrollInfo: (s: string) => theme.fg("dim", s),
+			noMatch: (s: string) => theme.fg("warning", s),
+		};
+		let list = new SelectList(items, 10, style);
+		const buildList = (query: string) => {
+			const filtered = query ? fuzzyFilter(items, query, (item) => item.value) : items;
+			list = new SelectList(filtered, 10, style);
+			list.onSelect = (item) => done(item.value);
+			list.onCancel = () => done(undefined);
+		};
+		buildList("");
+		container.addChild(new Text(theme.fg("accent", `Naming model: ${current}`), 0, 0));
+		container.addChild(input);
+		container.addChild({ render: (width: number) => list.render(width), invalidate: () => list.invalidate() });
+		container.addChild(new Text(theme.fg("dim", "Type to search · ↑↓ navigate · Enter select · Esc cancel"), 0, 0));
+		return {
+			capturesViewportInput: true,
+			get focused() { return input.focused; },
+			set focused(value: boolean) { input.focused = value; },
+			render: (width: number) => container.render(width),
+			invalidate: () => container.invalidate(),
+			handleInput(data: string) {
+				if (["tui.select.up", "tui.select.down", "tui.select.pageUp", "tui.select.pageDown", "tui.select.confirm", "tui.select.cancel"].some((key) => keys.matches(data, key))) {
+					list.handleInput(data);
+				} else {
+					input.handleInput(data);
+					buildList(input.getValue());
+				}
+				tui.requestRender();
+			},
+		};
+	}, { blocked: { kind: "question", message: "Choose a naming model" } });
 }
 
 function label(text: string, max = 64): string {
@@ -327,7 +370,7 @@ export default function (pi: ExtensionAPI) {
 				catch { current = "invalid config — select a model to repair"; }
 				if (!ctx.hasUI) return;
 				const available = ctx.modelRegistry.getAvailable().map((model) => `${model.provider}/${model.id}`).sort();
-				selected = await ctx.ui.select(`Naming model: ${current}`, ["current", ...new Set(available)]);
+				selected = await pickModel(ctx, current, available);
 				if (!selected || token !== generation) return;
 			}
 			if (selected !== "current" && !findModel(ctx, selected)) {

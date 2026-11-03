@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { copyFile, mkdtemp, mkdir, rm } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFile, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { after, beforeEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -13,6 +13,9 @@ const extensionDir = await mkdtemp(join(tmpdir(), "pi-naming-extension-"));
 const extensionFile = join(extensionDir, "index.ts");
 const modelConfig = join(extensionDir, "config.json");
 await copyFile(new URL("./index.ts", import.meta.url), extensionFile);
+const piRoot = process.env.PI_PACKAGE_DIR ?? "/usr/lib/node_modules/@earendil-works/pi-coding-agent";
+await mkdir(join(extensionDir, "node_modules", "@earendil-works"), { recursive: true });
+await symlink(join(dirname(piRoot), "pi-tui"), join(extensionDir, "node_modules", "@earendil-works", "pi-tui"), "dir");
 const { default: extension } = await import(pathToFileURL(extensionFile).href);
 beforeEach(() => rmSync(modelConfig, { force: true }));
 after(() => rm(extensionDir, { recursive: true, force: true }));
@@ -51,6 +54,18 @@ function harness(options = {}) {
 			notify: (message) => state.notices.push(message),
 			confirm: async (...args) => { state.confirmations.push(args); return state.accept ?? true; },
 			select: async (...args) => { state.selections.push(args); return state.selection; },
+			custom: async (factory) => {
+				let result;
+				const keys = { matches: (data, key) => ({ "tui.select.confirm": "\r", "tui.select.cancel": "\x1b", "tui.select.up": "\x1b[A", "tui.select.down": "\x1b[B" })[key] === data };
+				const component = factory({ requestRender() {} }, { fg: (_color, text) => text }, keys, (value) => { result = value; });
+				component.focused = true;
+				state.rendered = [component.render(80).join("\n")];
+				for (const key of state.pickerKeys ?? (state.selection ? [...state.selection, "\r"] : ["\x1b"])) {
+					component.handleInput(key);
+					state.rendered.push(component.render(80).join("\n"));
+				}
+				return result;
+			},
 		},
 		sessionManager: {
 			getSessionId: () => state.id,
@@ -226,7 +241,7 @@ test("home-launched sessions find target repo and late worktree branch without m
 			const evidence = JSON.parse(h.calls[0].context.messages[0].content);
 			assert.ok(evidence.context.includes("feat/directory-compatibility"));
 			assert.equal(evidence.repositories.filter((repo) => repo.name === "atlas-service").length, 1);
-			assert.ok(evidence.repositories.find((repo) => repo.name === "atlas-service").paths.includes(worktree));
+			assert.ok(evidence.repositories.find((repo) => repo.name === "atlas-service").paths.some((path) => realpathSync(path) === realpathSync(worktree)));
 			assert.equal(h.state.name, `atlas-rails/directories - port directory compatibility routes [wip] - atlas-service${branch.startsWith("feat/") ? "@feat/directory-compatibility" : ""} #a83f91bc`);
 		}
 	} finally {
@@ -271,8 +286,9 @@ test("model picker supports selection and cancellation; unknown models do not ov
 	const h = aiHarness(undefined, { selection: "cheap-provider/vendor/fast" });
 	await h.start();
 	await h.command("session-name-model");
-	assert.ok(h.state.selections[0][1].includes("current"));
-	assert.ok(h.state.selections[0][1].includes("cheap-provider/vendor/fast"));
+	assert.ok(h.state.rendered[0].includes("current"));
+	assert.ok(h.state.rendered[0].includes("cheap-provider/vendor/fast"));
+	assert.ok(h.state.rendered.at(-2).includes("cheap-provider/vendor/fast"));
 	const config = readFileSync(modelConfig, "utf8");
 	await h.command("session-name-model", "unknown/model");
 	assert.equal(readFileSync(modelConfig, "utf8"), config);
@@ -280,6 +296,19 @@ test("model picker supports selection and cancellation; unknown models do not ov
 	await h.command("session-name-model");
 	assert.equal(readFileSync(modelConfig, "utf8"), config);
 	assert.ok(h.state.notices.some((message) => message.includes("Unknown model")));
+});
+
+test("model picker filters by model substring, handles no matches and cancellation", async () => {
+	const h = aiHarness(undefined, { pickerKeys: [..."vendor/fast", "\r"] });
+	await h.start();
+	await h.command("session-name-model");
+	assert.equal(JSON.parse(readFileSync(modelConfig, "utf8")).model, "cheap-provider/vendor/fast");
+	assert.ok(!h.state.rendered.at(-2).includes("test-provider/test-model"));
+	const previous = readFileSync(modelConfig, "utf8");
+	h.state.pickerKeys = [..."no-such-model", "\r", "\x1b"];
+	await h.command("session-name-model");
+	assert.ok(h.state.rendered.some((render) => render.includes("No matching")));
+	assert.equal(readFileSync(modelConfig, "utf8"), previous);
 });
 
 test("unreadable or missing pinned models keep names unchanged, never silently switch providers", async () => {

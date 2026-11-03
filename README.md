@@ -36,7 +36,7 @@ pi --extension ./index.ts
 | `/session-autoname component/domain - task` | Supply a label directly, without an AI call. A task alone is also accepted. |
 | `/session-autoname [label] --branch branch-name` | Override the title's work branch; never check out or modify Git branches. With no label, still generates the name using AI. |
 | `/session-status wip\|blocked\|done` | Change status explicitly, without refreshing the task or branch. |
-| `/session-name-model` | Pick the naming model from available models. |
+| `/session-name-model` | Search available naming models by provider or model in the terminal; use arrows and Enter to select or Escape to cancel. |
 | `/session-name-model provider/model-id` | Pin a model for naming only. |
 | `/session-name-model current` | Follow the current chat model (the default). |
 
@@ -94,7 +94,7 @@ No dependency installation is needed to run the tests. For a distro/Nix installa
 PI_PACKAGE_DIR=/path/to/pi-coding-agent npm test
 ```
 
-The 27 tests mock model calls and use isolated extension copies, disposable Git repositories/worktrees and temporary sessions. They cover naming, branch evidence, source/target isolation, model preferences, failure/timeout handling, lifecycle races, confirmation, and real Pi loading/session persistence. They do not call an AI provider or change your real configuration/sessions.
+The tests mock model calls and use isolated extension copies, disposable Git repositories/worktrees and temporary sessions. They cover naming, branch evidence, source/target isolation, model preferences, failure/timeout handling, lifecycle races, confirmation, and real Pi loading/session persistence. They do not call an AI provider or change your real configuration/sessions.
 
 ## Remove
 
